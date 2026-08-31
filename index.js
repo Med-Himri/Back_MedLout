@@ -10,7 +10,7 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://medloutauto.vercel.app",
+  "https://front-med-lout.vercel.app/",
 ];
 
 const corsOptions = {
