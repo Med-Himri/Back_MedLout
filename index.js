@@ -10,7 +10,7 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://front-med-lout.vercel.app/",
+  "https://front-med-lout.vercel.app", // <-- fixed: removed trailing slash, this was the bug
 ];
 
 const corsOptions = {
@@ -22,18 +22,13 @@ const corsOptions = {
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // added PATCH (your orders/products routes use it), trimmed the stray whitespace on OPTIONS
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// A single cors(corsOptions) call handles preflight (OPTIONS) AND actual
-// requests consistently. The separate app.options('*', cors()) with no
-// options was applying a different, wide-open CORS policy just for
-// preflight — redundant now, and safer to remove so there's only one
-// source of truth for what's allowed.
 app.use(cors(corsOptions));
 
-const PORT = process.env.PORT || 5000; // let the platform (Vercel) assign its own port in production
+const PORT = process.env.PORT || 5000;
 
 connectDB();
 
@@ -53,7 +48,4 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Required for Vercel's serverless Node runtime to actually use this Express
-// app to handle requests — without this export, app.listen() alone may not
-// be enough depending on your vercel.json / build setup.
 module.exports = app;
