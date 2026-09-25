@@ -15,14 +15,9 @@ exports.createProductCtrl = async (req, res) => {
     slug,
     price,
     discountPrice,
-    sku,
-    partNumber,
-    condition,
     stock,
-    compatibility, // optional: [{ make, model, yearFrom, yearTo }] — omit for universal-fit parts
     category,
     tags,
-    brand,
     shortDescription,
     metaTitle,
     metaDescription,
@@ -54,30 +49,14 @@ exports.createProductCtrl = async (req, res) => {
       }
     }
 
-    // Parse compatibility if sent as a JSON string (common with multipart/form-data)
-    let parsedCompatibility = [];
-    if (compatibility) {
-      try {
-        parsedCompatibility =
-          typeof compatibility === "string" ? JSON.parse(compatibility) : compatibility;
-      } catch (err) {
-        console.error("Error parsing compatibility:", err);
-      }
-    }
-
     const newProduct = await ProductService.createProduct({
       title,
       slug,
       price,
       discountPrice,
-      sku,
-      partNumber,
-      condition,
       stock,
-      compatibility: parsedCompatibility, // e.g. [{ make: "Toyota", model: "Corolla", yearFrom: 2015, yearTo: 2020 }]
       category,
       tags,
-      brand,
       shortDescription,
       metaTitle,
       metaDescription,
@@ -104,39 +83,6 @@ exports.getAllProductsCtrl = async (req, res) => {
     res.status(200).json(products);
   } catch (error) {
     console.error("Error fetching products:", error);
-    res.status(500).json({ message: "Error fetching products", error });
-  }
-};
-
-/* ================= FIND PARTS BY VEHICLE (make/model/year) ================= */
-// @route GET /api/product/fits?make=Toyota&model=Corolla&year=2018
-// The signature feature for an auto parts store — lets a customer filter
-// down to only parts that fit their specific car.
-exports.getProductsByVehicleCtrl = async (req, res) => {
-  try {
-    const { make, model, year } = req.query;
-
-    if (!make || !model || !year) {
-      return res.status(400).json({ message: "make, model, and year are required" });
-    }
-
-    const yearNum = Number(year);
-
-    const products = await Product.find({
-      accepted: true,
-      compatibility: {
-        $elemMatch: {
-          make: new RegExp(`^${make}$`, "i"),
-          model: new RegExp(`^${model}$`, "i"),
-          yearFrom: { $lte: yearNum },
-          yearTo: { $gte: yearNum },
-        },
-      },
-    }).sort({ createdAt: -1 });
-
-    res.status(200).json(products);
-  } catch (error) {
-    console.error("Error fetching products by vehicle:", error);
     res.status(500).json({ message: "Error fetching products", error });
   }
 };
@@ -256,14 +202,9 @@ exports.updateProductCtrl = async (req, res) => {
     slug,
     price,
     discountPrice,
-    sku,
-    partNumber,
-    condition,
     stock,
-    compatibility,
     category,
     tags,
-    brand,
     shortDescription,
     metaTitle,
     metaDescription,
@@ -300,28 +241,15 @@ exports.updateProductCtrl = async (req, res) => {
       }
     }
 
-    if (compatibility !== undefined) {
-      try {
-        product.compatibility =
-          typeof compatibility === "string" ? JSON.parse(compatibility) : compatibility;
-      } catch (err) {
-        console.error("Error parsing compatibility:", err);
-      }
-    }
-
     if (title !== undefined) product.title = title;
     if (slug !== undefined) product.slug = slug;
     if (price !== undefined) product.price = price;
     if (discountPrice !== undefined) product.discountPrice = discountPrice;
-    if (sku !== undefined) product.sku = sku;
-    if (partNumber !== undefined) product.partNumber = partNumber;
-    if (condition !== undefined) product.condition = condition;
     if (stock !== undefined) product.stock = stock;
     if (category !== undefined) product.category = category;
     if (tags !== undefined) {
       product.tags = typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : tags;
     }
-    if (brand !== undefined) product.brand = brand;
     if (shortDescription !== undefined) product.shortDescription = shortDescription;
     if (metaTitle !== undefined) product.metaTitle = metaTitle;
     if (metaDescription !== undefined) product.metaDescription = metaDescription;
@@ -343,11 +271,6 @@ exports.createAIProductCtrl = async (req, res) => {
     price,
     discountPrice,
     galleryMeta,
-    compatibility,
-    partNumber,
-    sku,
-    condition,
-    brand,
   } = req.body;
   const user = req.id;
 
@@ -376,28 +299,26 @@ exports.createAIProductCtrl = async (req, res) => {
         : "";
 
     const systemPrompt = `
-    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C auto parts store selling genuine and aftermarket car parts.
+    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C store selling accessories.
     You will be shown a product photo. Base your category, tags, and description on what the image ACTUALLY shows.
 
     CATEGORY & VISUAL ANALYSIS REQUIREMENTS:
-    - Look at the image carefully before deciding on a category. Respond in FRENCH. Common categories: Freins, Filtres (Huile/Air/Carburant), Suspension, Composants Moteur, Électrique, Système de Refroidissement, Échappement, Carrosserie, Éclairage, Outils & Accessoires.
+    - Look at the image carefully before deciding on a category. Respond in FRENCH.
     - ALL generated text (description, shortDescription, metaTitle, metaDescription, category, tags) MUST be written in French, not English.
-    - Identify the specific part type as precisely as possible (e.g. "brake caliper" not just "brakes").
-    - Do NOT claim compatibility with any specific vehicle make/model/year in the description — compatibility is set manually and must not be guessed by you.
+    - Identify the specific product type as precisely as possible.
 
     CONTENT & SEO REQUIREMENTS:
     - Slug Quality: base the slug on a clean, corrected version of the product name.
-    - Focus Keyword Integration: naturally include phrases like "OEM replacement part", "aftermarket [part type]", or "genuine [part type]" depending on what's visually apparent (condition/finish), along with LSI keywords relevant to auto parts (durability, fitment, installation).
-    - Tone & Audience: write for car owners and DIY mechanics who want a reliable, clearly-described part. Avoid vague marketing fluff — be specific and technical where possible.
-    - Accuracy: do NOT claim OEM/genuine manufacturer origin unless visually obvious from branding/packaging in the photo — otherwise describe it neutrally as a quality replacement part.
+    - Focus Keyword Integration: naturally include relevant LSI keywords for the product type (quality, style, durability).
+    - Tone & Audience: write for shoppers who want a clearly-described, quality accessory. Avoid vague marketing fluff — be specific where possible.
+    - Accuracy: do NOT claim a specific manufacturer/brand origin unless visually obvious from branding/packaging in the photo.
     - HTML Description: Write a clear, informative product description in valid HTML.
-      * Start with a paragraph (<p>) describing what the part is and its function.
-      * Use <h2> for sections like "Key Features", "Installation Notes", "Specifications".
+      * Start with a paragraph (<p>) describing what the product is and its use.
+      * Use <h2> for sections like "Points Forts", "Caractéristiques".
       * Use <ul>/<li> for feature lists.
-      * Use a <table> for "Specifications" (Material, Dimensions if visible, Finish).
-      * Use <strong> to highlight durability/quality points.
-    - Short Description: 1-2 sentence summary shown under the price, focused on the part's function and quality.
-    - Brand Voice: reliable, technical, straightforward — this is a parts store, not a luxury boutique.
+      * Use <strong> to highlight quality points.
+    - Short Description: 1-2 sentence summary shown under the price, focused on the product's use and quality.
+    - Brand Voice: reliable, clear, straightforward.
     ${linksPrompt}
 
     You MUST return ONLY a valid JSON object. Ensure all HTML inside "description" is properly string-escaped. Use this strict structure:
@@ -477,16 +398,6 @@ exports.createAIProductCtrl = async (req, res) => {
       }
     }
 
-    let parsedCompatibility = [];
-    if (compatibility) {
-      try {
-        parsedCompatibility =
-          typeof compatibility === "string" ? JSON.parse(compatibility) : compatibility;
-      } catch (err) {
-        console.error("Error parsing compatibility:", err);
-      }
-    }
-
     let uploadedGallery = [];
     if (galleryImageFiles.length > 0) {
       const uploadPromises = galleryImageFiles.map((file) => cloudinaryUploadImage(file.path));
@@ -505,13 +416,8 @@ exports.createAIProductCtrl = async (req, res) => {
       shortDescription: aiData.shortDescription,
       price: Number(price),
       discountPrice: discountPrice ? Number(discountPrice) : undefined,
-      partNumber, // staff-entered, never AI-guessed — technical accuracy matters here
-      sku,
-      condition, // "new" | "used" | "refurbished" — defaults to "new" if omitted
-      brand, // parts manufacturer, e.g. "Bosch" — staff-entered
       category: aiData.category,
       tags: aiData.tags,
-      compatibility: parsedCompatibility, // manual entry — never AI-guessed
       metaTitle: aiData.metaTitle,
       metaDescription: aiData.metaDescription,
       user: user,

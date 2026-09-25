@@ -26,8 +26,6 @@ router.get("/getlastProducts", getLastProductsCtrl);
 router.get("/getproducts", getProductsCtrl);
 router.get("/getallproducts", getAllProductsCtrl);
 
-// Vehicle compatibility search — e.g. /api/product/fits?make=Toyota&model=Corolla&year=2018
-router.get("/fits", getProductsByVehicleCtrl);
 
 router.get("/:slug", getSingleProductCtrl);
 
