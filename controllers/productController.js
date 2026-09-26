@@ -334,35 +334,52 @@ exports.createAIProductCtrl = async (req, res) => {
   `;
 
     const apiKey = process.env.GROQ_API_KEY;
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "qwen/qwen3.6-27b",
-        reasoning_effort: "none",
-        reasoning_format: "hidden",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `The product name provided by the user is: "${productName}". Look at the attached photo and base the category, tags, and description on what it actually shows.`,
-              },
-              { type: "image_url", image_url: { url: uploadedMainImage.secure_url } },
-            ],
-          },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.7,
-      }),
-    });
 
-    const data = await response.json();
+    // Groq periodically renames/retires vision model IDs (hit this exact
+    // failure in production once already). Try the current name first,
+    // and fall back to older/adjacent names if Groq reports the model as
+    // missing, so a silent rename on their end doesn't take AI creation down.
+    const VISION_MODEL_CANDIDATES = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"];
+
+    let response, data;
+    for (const model of VISION_MODEL_CANDIDATES) {
+      response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          reasoning_effort: "none",
+          reasoning_format: "hidden",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `The product name provided by the user is: "${productName}". Look at the attached photo and base the category, tags, and description on what it actually shows.`,
+                },
+                { type: "image_url", image_url: { url: uploadedMainImage.secure_url } },
+              ],
+            },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.7,
+        }),
+      });
+
+      data = await response.json();
+
+      const modelMissing =
+        !response.ok && /does not exist|not found|decommissioned/i.test(data.error?.message || "");
+
+      if (!modelMissing) break; // success, or a different kind of error — stop retrying
+
+      console.warn(`Groq model "${model}" unavailable, trying next candidate...`);
+    }
 
     if (!response.ok) {
       console.error("Groq API Error:", data);
