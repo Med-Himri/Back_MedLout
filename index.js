@@ -30,7 +30,7 @@ app.use(cors(corsOptions));
 
 const PORT = process.env.PORT || 5000;
 
-connectDB();
+connectDB().catch((err) => console.error("Failed to connect to MongoDB:", err));
 
 // Middleware
 app.use(express.json());
