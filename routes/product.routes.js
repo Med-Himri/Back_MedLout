@@ -1,9 +1,7 @@
 const express = require("express");
+const asyncHandler = require("../utils/asyncHandler");
+const upload = require("../middlewares/upload");
 const { verifyToken } = require("../middlewares/authMiddleware");
-
-const router = express.Router();
-
-const multer = require("multer");
 const {
   getProductSitemapCtrl,
   getLastProductsCtrl,
@@ -11,59 +9,48 @@ const {
   getAllProductsCtrl,
   getSingleProductCtrl,
   getProductByIdCtrl,
-  getProductsByVehicleCtrl,
   rejectProductCtrl,
   acceptProductCtrl,
   createProductCtrl,
   updateProductCtrl,
   createAIProductCtrl,
 } = require("../controllers/productController");
-const upload = multer({ dest: "/tmp/images/" });
 
-/* ================= PUBLIC ROUTES ================= */
-router.get("/", getProductSitemapCtrl);
-router.get("/getlastProducts", getLastProductsCtrl);
-router.get("/getproducts", getProductsCtrl);
-router.get("/getallproducts", getAllProductsCtrl);
+const router = express.Router();
 
+const productImages = upload.fields([
+  { name: "mainImage", maxCount: 1 },
+  { name: "gallery", maxCount: 10 },
+]);
 
-router.get("/:slug", getSingleProductCtrl);
+// Auth is applied per route (not router.use) so the order of routes can't
+// accidentally make a protected route public or vice versa.
 
-/* ================= PROTECTED ROUTES (staff/admin) ================= */
-router.use(verifyToken);
+/* ================= PUBLIC ================= */
+router.get("/", asyncHandler(getProductSitemapCtrl));
+router.get("/getlastProducts", asyncHandler(getLastProductsCtrl));
+router.get("/getallproducts", asyncHandler(getAllProductsCtrl));
 
-// Admin lookup by id — placed here (after public routes) since it's two
-// path segments ("/admin/:id"), so it never collides with "/:slug" above.
-router.get("/admin/:id", getProductByIdCtrl);
+/* ================= STAFF / ADMIN ================= */
+// Declared before "/:slug" so "getproducts" is not read as a slug
+router.get("/getproducts", verifyToken, asyncHandler(getProductsCtrl));
+router.get("/admin/:id", verifyToken, asyncHandler(getProductByIdCtrl));
 
-router.post(
-  "/addproduct",
-  upload.fields([
-    { name: "mainImage", maxCount: 1 },
-    { name: "gallery", maxCount: 10 },
-  ]),
-  createProductCtrl
-);
-
+router.post("/addproduct", verifyToken, productImages, asyncHandler(createProductCtrl));
+router.post("/updateproduct", verifyToken, productImages, asyncHandler(updateProductCtrl));
 router.post(
   "/createaiproduct",
+  verifyToken,
   upload.fields([
     { name: "mainImage", maxCount: 1 },
-    { name: "galleryImages", maxCount: 10 }, // matches createAIProductCtrl's expected field name
+    { name: "galleryImages", maxCount: 10 },
   ]),
-  createAIProductCtrl
+  asyncHandler(createAIProductCtrl)
 );
+router.post("/acceptproduct", verifyToken, asyncHandler(acceptProductCtrl));
+router.post("/delete", verifyToken, asyncHandler(rejectProductCtrl));
 
-router.post(
-  "/updateproduct",
-  upload.fields([
-    { name: "mainImage", maxCount: 1 },
-    { name: "gallery", maxCount: 10 },
-  ]),
-  updateProductCtrl
-);
-
-router.post("/delete", rejectProductCtrl);
-router.post("/acceptproduct", acceptProductCtrl);
+/* ================= PUBLIC (catch-all, keep last) ================= */
+router.get("/:slug", asyncHandler(getSingleProductCtrl));
 
 module.exports = router;

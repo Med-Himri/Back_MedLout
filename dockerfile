@@ -1,16 +1,15 @@
-# Use Node.js v14
-FROM node:20
+FROM node:20-alpine
 
 WORKDIR /app
+ENV NODE_ENV=production
 
 COPY package*.json ./
+RUN npm ci --omit=dev
 
-RUN npm install
-
-# Bundle app source
 COPY . .
 
-# Expose the port
-EXPOSE 5000
+# Don't run the server as root
+USER node
 
-CMD [ "node", "index.js" ]
+EXPOSE 5000
+CMD ["node", "index.js"]

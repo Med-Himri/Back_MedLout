@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
-const applyToJSONTransform = require("../utils/applyToJSONTransform");
 
+// One pending password-reset code per user. The code itself is stored hashed,
+// and MongoDB deletes the document automatically after 15 minutes.
 const otpSchema = new mongoose.Schema(
   {
     userId: {
@@ -12,16 +13,20 @@ const otpSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    attempts: {
+      type: Number,
+      default: 0,
+    },
     createdAt: {
       type: Date,
       required: true,
       default: Date.now,
-      expires: 600,
+      expires: 900,
     },
   },
   {
     timestamps: false,
   }
 );
-applyToJSONTransform(otpSchema);
+
 module.exports = mongoose.model("Otp", otpSchema);
