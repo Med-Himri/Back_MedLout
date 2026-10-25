@@ -2,7 +2,6 @@ const sanitizeHtml = require("sanitize-html");
 const { Product } = require("../models/Product");
 const { uploadImage, uploadImages, discardUploads, removeImages } = require("../utils/cloudinary");
 
-const SITE_URL = (process.env.SITE_URL || "https://www.medloutauto.com").replace(/\/$/, "");
 const STOCK_VALUES = ["in_stock", "out_of_stock"];
 
 // Fields the public shop grid / cards need — never the full HTML description.
@@ -268,7 +267,8 @@ exports.createAIProductCtrl = async (req, res) => {
     .limit(5)
     .select("slug")
     .lean();
-  const internalLinks = recentProducts.map((prod) => `${SITE_URL}/produit/${prod.slug}`);
+  // Relative links keep working on any domain (vercel.app today, .com later)
+  const internalLinks = recentProducts.map((prod) => `/produit/${prod.slug}`);
 
   const linksPrompt =
     internalLinks.length > 0

@@ -95,7 +95,7 @@ exports.forgotPassword = async (req, res) => {
   await Otp.deleteMany({ userId: String(user._id) });
   await Otp.create({ userId: String(user._id), token: await bcrypt.hash(code, 10) });
 
-  const frontend = (process.env.FRONTEND_URL || "https://www.medloutauto.com").replace(/\/$/, "");
+  const frontend = (process.env.FRONTEND_URL || "https://front-med-lout.vercel.app").replace(/\/$/, "");
   const link = `${frontend}/dashboard/reinitialiser?uid=${user._id}&code=${code}`;
 
   try {
