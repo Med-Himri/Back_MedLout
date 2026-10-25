@@ -41,7 +41,7 @@ const ProductSchema = new mongoose.Schema(
     category: {
       type: String,
       required: false,
-      trim: true, // e.g. "Brakes", "Filters", "Suspension", "Electrical"
+      trim: true, // e.g. "Freins", "Filtres", "Suspension", "Électrique"
     },
     tags: {
       type: [String],
@@ -73,6 +73,12 @@ const ProductSchema = new mongoose.Schema(
     accepted: {
       type: Boolean,
       default: false,
+      index: true,
+    },
+    // Written by the AI assistant and not yet reviewed by a person
+    aiGenerated: {
+      type: Boolean,
+      default: false,
     },
   },
   {
@@ -81,6 +87,8 @@ const ProductSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
+
+ProductSchema.index({ accepted: 1, createdAt: -1 });
 
 const Product = mongoose.model("Product", ProductSchema);
 

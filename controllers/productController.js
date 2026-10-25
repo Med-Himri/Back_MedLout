@@ -1,305 +1,284 @@
+const sanitizeHtml = require("sanitize-html");
 const { Product } = require("../models/Product");
-const User = require("../models/User");
-const ProductService = require("../services/product.service");
-const { cloudinaryUploadImage } = require("../utils/cloudinary");
+const { uploadImage, uploadImages, discardUploads, removeImages } = require("../utils/cloudinary");
 
-/** --------------------------------------------------
- * @desc    Create new product
- * @route   /api/product/addproduct
- * @method  POST
- * @access  Private (staff / admin)
- -------------------------------------------------- **/
-exports.createProductCtrl = async (req, res) => {
-  const {
-    title,
-    slug,
-    price,
-    discountPrice,
-    stock,
-    category,
-    tags,
-    shortDescription,
-    metaTitle,
-    metaDescription,
-    description,
-  } = req.body;
+const SITE_URL = (process.env.SITE_URL || "https://www.medloutauto.com").replace(/\/$/, "");
+const STOCK_VALUES = ["in_stock", "out_of_stock"];
 
-  const user = req.id;
-  const files = req.files;
+// Fields the public shop grid / cards need — never the full HTML description.
+const CARD_FIELDS = "title slug price discountPrice stock category mainImage shortDescription createdAt";
 
-  try {
-    let staff = await User.findById(user);
-    if (!staff) {
-      return res.status(403).json({ message: "Access denied. Staff or admin only." });
-    }
+/* ================= HELPERS ================= */
 
-    if (!title || !price || !description || !files?.mainImage) {
-      return res.status(400).json({
-        message: "title, price, description and main image are required",
-      });
-    }
+// The description is rendered as HTML on the product page, so only harmless
+// formatting tags survive (no <script>, no on* attributes, no javascript: links).
+const cleanDescription = (html = "") =>
+  sanitizeHtml(String(html), {
+    allowedTags: [
+      "p", "br", "h2", "h3", "h4", "strong", "b", "em", "i", "u", "s",
+      "ul", "ol", "li", "a", "blockquote", "span",
+    ],
+    allowedAttributes: { a: ["href", "target", "rel"] },
+    allowedSchemes: ["http", "https", "mailto", "tel"],
+    transformTags: {
+      a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer" }, true),
+    },
+  });
 
-    const mainImageUpload = await cloudinaryUploadImage(files.mainImage[0].path);
+const slugify = (str = "") =>
+  String(str)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 
-    let galleryImages = [];
-    if (files.gallery && files.gallery.length > 0) {
-      for (const img of files.gallery) {
-        const uploaded = await cloudinaryUploadImage(img.path);
-        galleryImages.push({ url: uploaded.secure_url, publicId: uploaded.public_id });
-      }
-    }
-
-    const newProduct = await ProductService.createProduct({
-      title,
-      slug,
-      price,
-      discountPrice,
-      stock,
-      category,
-      tags,
-      shortDescription,
-      metaTitle,
-      metaDescription,
-      description,
-      user,
-      mainImage: { url: mainImageUpload.secure_url, publicId: mainImageUpload.public_id },
-      gallery: galleryImages,
-    });
-
-    res.status(201).json({ product: newProduct });
-  } catch (error) {
-    console.error("Error creating product:", error);
-    res.status(500).json({ message: "Error creating product", error });
+/** Returns `base`, or `base-2`, `base-3`... — whichever is not used by another product. */
+const uniqueSlug = async (wanted, excludeId) => {
+  const base = slugify(wanted) || "produit";
+  let slug = base;
+  for (let i = 2; ; i++) {
+    const clash = await Product.exists({ slug, ...(excludeId ? { _id: { $ne: excludeId } } : {}) });
+    if (!clash) return slug;
+    slug = `${base}-${i}`;
   }
 };
 
-/* ================= GET ALL ACCEPTED PRODUCTS ================= */
+// Accepts an array or a "a, b, c" string (multipart forms send strings).
+const parseTags = (tags) => {
+  const list = Array.isArray(tags) ? tags : String(tags ?? "").split(",");
+  return [...new Set(list.map((t) => String(t).trim()).filter(Boolean))].slice(0, 20);
+};
+
+// "" / undefined → undefined (field cleared), otherwise a positive number or NaN.
+const parsePrice = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  return Number(value);
+};
+
+const parseBool = (value) => value === true || value === "true" || value === "1" || value === "on";
+
+const badRequest = (res, message) => res.status(400).json({ message });
+
+/* ================= PUBLIC: ALL ACCEPTED PRODUCTS ================= */
 exports.getAllProductsCtrl = async (req, res) => {
-  try {
-    const products = await Product.find({ accepted: true }).sort({ createdAt: -1 }).lean();
-    if (!products.length) {
-      return res.status(404).json({ message: "No products found" });
-    }
-    res.status(200).json(products);
-  } catch (error) {
-    console.error("Error fetching products:", error);
-    res.status(500).json({ message: "Error fetching products", error });
+  const filter = { accepted: true };
+  if (typeof req.query.category === "string" && req.query.category) {
+    filter.category = req.query.category;
   }
+  const products = await Product.find(filter).select(CARD_FIELDS).sort({ createdAt: -1 }).lean();
+  res.status(200).json(products);
 };
 
-/* ================= GET SINGLE PRODUCT ================= */
+/* ================= PUBLIC: SINGLE PRODUCT ================= */
 exports.getSingleProductCtrl = async (req, res) => {
-  try {
-    const { slug } = req.params;
-    if (!slug) {
-      return res.status(400).json({ message: "Product slug is required" });
-    }
-    const product = await Product.findOne({ slug, accepted: true });
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-    res.status(200).json(product);
-  } catch (error) {
-    console.error("Error fetching product:", error);
-    res.status(500).json({ message: "Internal Server Error", error });
-  }
+  const product = await Product.findOne({ slug: req.params.slug, accepted: true })
+    .select("-user")
+    .lean();
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  // Also cleaned on read: products saved before sanitizing existed may hold raw HTML
+  product.description = cleanDescription(product.description);
+  res.status(200).json(product);
 };
 
-/* ================= GET PRODUCTS (ADMIN LIST) ================= */
-exports.getProductsCtrl = async (req, res) => {
-  try {
-    const products = await Product.find().select("title mainImage accepted").lean();
-    if (!products.length) {
-      return res.status(404).json({ message: "No products found" });
-    }
-    res.status(200).json(products);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-/* ================= SITEMAP DATA ================= */
+/* ================= PUBLIC: SITEMAP DATA ================= */
 exports.getProductSitemapCtrl = async (req, res) => {
-  try {
-    const products = await Product.find({ accepted: true }).select("slug updatedAt").lean();
-    res.status(200).json(products || []);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const products = await Product.find({ accepted: true }).select("slug updatedAt").lean();
+  res.status(200).json(products);
 };
 
-/* ================= LAST PRODUCTS ================= */
+/* ================= PUBLIC: LAST PRODUCTS ================= */
 exports.getLastProductsCtrl = async (req, res) => {
-  try {
-    const products = await Product.find({ accepted: true })
-      .select("title mainImage shortDescription price")
-      .sort({ _id: -1 })
-      .limit(3)
-      .lean();
-    if (!products.length) {
-      return res.status(404).json({ message: "No products found" });
-    }
-    res.status(200).json(products);
-  } catch (error) {
-    console.error("Error fetching last products:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
+  const products = await Product.find({ accepted: true })
+    .select(CARD_FIELDS)
+    .sort({ createdAt: -1 })
+    .limit(3)
+    .lean();
+  res.status(200).json(products);
 };
 
-/* ================= REJECT PRODUCT ================= */
-exports.rejectProductCtrl = async (req, res) => {
-  try {
-    const { id } = req.body;
-    const deletedProduct = await Product.findOneAndDelete({ _id: id });
-    if (!deletedProduct) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-    res.status(200).json({ message: "Product deleted successfully", deletedProduct });
-  } catch (error) {
-    res.status(500).json({ message: "Error deleting product", error });
-  }
+/* ================= ADMIN: LIST (all, including hidden) ================= */
+exports.getProductsCtrl = async (req, res) => {
+  const products = await Product.find()
+    .select("title slug mainImage accepted aiGenerated price discountPrice stock category createdAt")
+    .sort({ createdAt: -1 })
+    .lean();
+  res.status(200).json(products);
 };
 
-/* ================= ACCEPT PRODUCT ================= */
-exports.acceptProductCtrl = async (req, res) => {
-  try {
-    const { id } = req.body;
-    const updatedProduct = await Product.findOneAndUpdate(
-      { _id: id },
-      { accepted: true },
-      { new: true }
-    );
-    if (!updatedProduct) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-    res.status(200).json({ message: "Product accepted successfully", updatedProduct });
-  } catch (error) {
-    res.status(500).json({ message: "Error accepting product", error });
-  }
-};
-
-/* ================= GET PRODUCT BY ID (ADMIN — no accepted filter) ================= */
+/* ================= ADMIN: BY ID (no accepted filter) ================= */
 exports.getProductByIdCtrl = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-    res.status(200).json(product);
-  } catch (error) {
-    console.error("Error fetching product by id:", error);
-    res.status(500).json({ message: "Internal Server Error", error });
-  }
+  const product = await Product.findById(req.params.id).lean();
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  res.status(200).json(product);
 };
 
-/* ================= UPDATE PRODUCT (ADMIN / STAFF) ================= */
-// @route POST /api/product/updateproduct
+/* ================= ADMIN: CREATE (manual form) ================= */
+exports.createProductCtrl = async (req, res) => {
+  const b = req.body;
+  const files = req.files || {};
+  const price = parsePrice(b.price);
+  const discountPrice = parsePrice(b.discountPrice);
+
+  if (!b.title || !b.description || !files.mainImage) {
+    await discardUploads(files);
+    return badRequest(res, "Titre, prix, description et image principale sont requis");
+  }
+  if (!(price > 0) || (discountPrice !== undefined && !(discountPrice >= 0))) {
+    await discardUploads(files);
+    return badRequest(res, "Prix invalide");
+  }
+
+  const [mainImage, gallery] = await Promise.all([
+    uploadImage(files.mainImage[0]),
+    uploadImages(files.gallery),
+  ]);
+
+  const product = await Product.create({
+    title: b.title,
+    slug: await uniqueSlug(b.slug || b.title),
+    price,
+    discountPrice,
+    stock: STOCK_VALUES.includes(b.stock) ? b.stock : "in_stock",
+    category: b.category,
+    tags: parseTags(b.tags),
+    shortDescription: b.shortDescription,
+    metaTitle: b.metaTitle,
+    metaDescription: b.metaDescription,
+    description: cleanDescription(b.description),
+    user: req.id,
+    mainImage,
+    gallery,
+    accepted: b.accepted === undefined ? true : parseBool(b.accepted),
+  });
+
+  res.status(201).json({ product });
+};
+
+/* ================= ADMIN: UPDATE ================= */
+// @route POST /api/product/updateproduct  (multipart; only sent fields change)
 exports.updateProductCtrl = async (req, res) => {
-  const {
-    id,
-    title,
-    slug,
-    price,
-    discountPrice,
-    stock,
-    category,
-    tags,
-    shortDescription,
-    metaTitle,
-    metaDescription,
-    description,
-  } = req.body;
+  const b = req.body;
+  const files = req.files || {};
 
-  const user = req.id;
-  const files = req.files;
-
-  try {
-    const staff = await User.findById(user);
-    if (!staff) {
-      return res.status(403).json({ message: "Access denied. Staff or admin only." });
-    }
-
-    if (!id) {
-      return res.status(400).json({ message: "Product id is required" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    if (files?.mainImage) {
-      const uploaded = await cloudinaryUploadImage(files.mainImage[0].path);
-      product.mainImage = { url: uploaded.secure_url, publicId: uploaded.public_id };
-    }
-
-    if (files?.gallery && files.gallery.length > 0) {
-      for (const img of files.gallery) {
-        const uploaded = await cloudinaryUploadImage(img.path);
-        product.gallery.push({ url: uploaded.secure_url, publicId: uploaded.public_id });
-      }
-    }
-
-    if (title !== undefined) product.title = title;
-    if (slug !== undefined) product.slug = slug;
-    if (price !== undefined) product.price = price;
-    if (discountPrice !== undefined) product.discountPrice = discountPrice;
-    if (stock !== undefined) product.stock = stock;
-    if (category !== undefined) product.category = category;
-    if (tags !== undefined) {
-      product.tags = typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : tags;
-    }
-    if (shortDescription !== undefined) product.shortDescription = shortDescription;
-    if (metaTitle !== undefined) product.metaTitle = metaTitle;
-    if (metaDescription !== undefined) product.metaDescription = metaDescription;
-    if (description !== undefined) product.description = description;
-
-    await product.save();
-
-    res.status(200).json({ message: "Product updated successfully", product });
-  } catch (error) {
-    console.error("Error updating product:", error);
-    res.status(500).json({ message: "Error updating product", error });
+  const product = b.id ? await Product.findById(b.id) : null;
+  if (!product) {
+    await discardUploads(files);
+    return res.status(404).json({ message: "Product not found" });
   }
+
+  const price = parsePrice(b.price);
+  const discountPrice = parsePrice(b.discountPrice);
+  if (b.price !== undefined && !(price > 0)) {
+    await discardUploads(files);
+    return badRequest(res, "Prix invalide");
+  }
+  if (discountPrice !== undefined && !(discountPrice >= 0)) {
+    await discardUploads(files);
+    return badRequest(res, "Prix promo invalide");
+  }
+
+  const toDelete = [];
+
+  if (files.mainImage) {
+    toDelete.push(product.mainImage?.publicId);
+    product.mainImage = await uploadImage(files.mainImage[0]);
+  }
+
+  // Gallery photos removed in the edit form
+  if (b.removeGallery) {
+    let ids = [];
+    try {
+      ids = JSON.parse(b.removeGallery);
+    } catch {
+      ids = [];
+    }
+    if (Array.isArray(ids) && ids.length) {
+      toDelete.push(...ids);
+      product.gallery = product.gallery.filter((img) => !ids.includes(img.publicId));
+    }
+  }
+  if (files.gallery?.length) {
+    product.gallery.push(...(await uploadImages(files.gallery)));
+  }
+
+  if (b.title !== undefined) product.title = b.title;
+  if (b.slug !== undefined && slugify(b.slug) !== product.slug) {
+    product.slug = await uniqueSlug(b.slug || product.title, product._id);
+  }
+  if (price !== undefined) product.price = price;
+  if (b.discountPrice !== undefined) product.discountPrice = discountPrice;
+  if (STOCK_VALUES.includes(b.stock)) product.stock = b.stock;
+  if (b.category !== undefined) product.category = b.category;
+  if (b.tags !== undefined) product.tags = parseTags(b.tags);
+  if (b.shortDescription !== undefined) product.shortDescription = b.shortDescription;
+  if (b.metaTitle !== undefined) product.metaTitle = b.metaTitle;
+  if (b.metaDescription !== undefined) product.metaDescription = b.metaDescription;
+  if (b.description !== undefined) product.description = cleanDescription(b.description);
+  if (b.accepted !== undefined) {
+    product.accepted = parseBool(b.accepted);
+    // Publishing an AI draft means someone reviewed it
+    if (product.accepted) product.aiGenerated = false;
+  }
+
+  await product.save();
+  removeImages(toDelete); // after the save, so a failed save never loses images
+
+  res.status(200).json({ message: "Product updated successfully", product });
 };
 
-/* ================= AI-ASSISTED PRODUCT CREATION (vision model) ================= */
+/* ================= ADMIN: PUBLISH ================= */
+exports.acceptProductCtrl = async (req, res) => {
+  const product = await Product.findByIdAndUpdate(
+    req.body.id,
+    { accepted: true, aiGenerated: false },
+    { new: true }
+  );
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  res.status(200).json({ message: "Product accepted successfully", updatedProduct: product });
+};
+
+/* ================= ADMIN: DELETE ================= */
+exports.rejectProductCtrl = async (req, res) => {
+  const product = await Product.findByIdAndDelete(req.body.id);
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  await removeImages([product.mainImage?.publicId, ...product.gallery.map((g) => g.publicId)]);
+  res.status(200).json({ message: "Product deleted successfully" });
+};
+
+/* ================= ADMIN: AI-ASSISTED CREATION (vision model) ================= */
 exports.createAIProductCtrl = async (req, res) => {
-  const {
-    productName,
-    price,
-    discountPrice,
-    galleryMeta,
-  } = req.body;
-  const user = req.id;
+  const { productName, galleryMeta } = req.body;
+  const price = parsePrice(req.body.price);
+  const discountPrice = parsePrice(req.body.discountPrice);
+  const files = req.files || {};
+  const mainImageFile = files.mainImage?.[0];
+  const galleryImageFiles = files.galleryImages || [];
 
-  const mainImageFile = req.files && req.files["mainImage"] ? req.files["mainImage"][0] : null;
-  const galleryImageFiles = req.files && req.files["galleryImages"] ? req.files["galleryImages"] : [];
+  if (!productName || !mainImageFile || !(price > 0)) {
+    await discardUploads(files);
+    return badRequest(res, "Nom du produit, prix et image principale sont requis");
+  }
 
-  try {
-    if (!productName || !price || !mainImageFile) {
-      return res.status(400).json({
-        error: "Product name, price, and main image are required!",
-      });
-    }
+  const uploadedMainImage = await uploadImage(mainImageFile);
 
-    const uploadedMainImage = await cloudinaryUploadImage(mainImageFile.path);
+  const recentProducts = await Product.find({ accepted: true })
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .select("slug")
+    .lean();
+  const internalLinks = recentProducts.map((prod) => `${SITE_URL}/produit/${prod.slug}`);
 
-    const recentProducts = await Product.find().sort({ createdAt: -1 }).limit(5);
-    const internalLinks = recentProducts.map(
-      (prod) => `https://www.medloutauto.com/product/${prod.slug}`
-    );
+  const linksPrompt =
+    internalLinks.length > 0
+      ? `\n- INTERNAL LINKS: You MUST naturally integrate 1 or 2 of the following links into the product description text to cross-sell other parts:\n  ${internalLinks.join(
+          "\n  "
+        )}`
+      : "";
 
-    const linksPrompt =
-      internalLinks.length > 0
-        ? `\n- INTERNAL LINKS: You MUST naturally integrate 1 or 2 of the following links into the product description text to cross-sell other parts:\n  ${internalLinks.join(
-            "\n  "
-          )}`
-        : "";
-
-    const systemPrompt = `
-    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C store selling accessories.
+  const systemPrompt = `
+    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C store selling car accessories in Morocco.
     You will be shown a product photo. Base your category, tags, and description on what the image ACTUALLY shows.
 
     CATEGORY & VISUAL ANALYSIS REQUIREMENTS:
@@ -333,125 +312,109 @@ exports.createAIProductCtrl = async (req, res) => {
     }
   `;
 
-    const apiKey = process.env.GROQ_API_KEY;
+  // Groq periodically renames/retires vision model IDs. Try the current name
+  // first, and fall back if Groq reports the model as missing.
+  const VISION_MODEL_CANDIDATES = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"];
 
-    // Groq periodically renames/retires vision model IDs (hit this exact
-    // failure in production once already). Try the current name first,
-    // and fall back to older/adjacent names if Groq reports the model as
-    // missing, so a silent rename on their end doesn't take AI creation down.
-    const VISION_MODEL_CANDIDATES = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"];
-
-    let response, data;
-    for (const model of VISION_MODEL_CANDIDATES) {
-      response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          reasoning_effort: "none",
-          reasoning_format: "hidden",
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `The product name provided by the user is: "${productName}". Look at the attached photo and base the category, tags, and description on what it actually shows.`,
-                },
-                { type: "image_url", image_url: { url: uploadedMainImage.secure_url } },
-              ],
-            },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.7,
-        }),
-      });
-
-      data = await response.json();
-
-      const modelMissing =
-        !response.ok && /does not exist|not found|decommissioned/i.test(data.error?.message || "");
-
-      if (!modelMissing) break; // success, or a different kind of error — stop retrying
-
-      console.warn(`Groq model "${model}" unavailable, trying next candidate...`);
-    }
-
-    if (!response.ok) {
-      console.error("Groq API Error:", data);
-      return res.status(response.status).json({
-        message: "Error from Groq API",
-        error: data.error?.message || "Unknown error",
-      });
-    }
-
-    const responseText = data.choices[0].message.content;
-
-    let aiData;
-    try {
-      aiData = JSON.parse(responseText);
-    } catch (parseErr) {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.error("Could not extract JSON from AI response:", responseText);
-        return res.status(500).json({
-          message: "AI response was not valid JSON",
-          error: parseErr.message,
-        });
-      }
-      aiData = JSON.parse(jsonMatch[0]);
-    }
-
-    let parsedGalleryMeta = [];
-    if (galleryMeta) {
-      try {
-        parsedGalleryMeta = JSON.parse(galleryMeta);
-      } catch (err) {
-        console.error("Error parsing galleryMeta:", err);
-      }
-    }
-
-    let uploadedGallery = [];
-    if (galleryImageFiles.length > 0) {
-      const uploadPromises = galleryImageFiles.map((file) => cloudinaryUploadImage(file.path));
-      const results = await Promise.all(uploadPromises);
-      uploadedGallery = results.map((result, i) => ({
-        url: result.secure_url,
-        publicId: result.public_id,
-        alt: parsedGalleryMeta[i]?.alt || productName,
-      }));
-    }
-
-    const newProduct = await Product.create({
-      title: productName, // title is written by you, not AI-generated
-      slug: aiData.slug,
-      description: aiData.description,
-      shortDescription: aiData.shortDescription,
-      price: Number(price),
-      discountPrice: discountPrice ? Number(discountPrice) : undefined,
-      category: aiData.category,
-      tags: aiData.tags,
-      metaTitle: aiData.metaTitle,
-      metaDescription: aiData.metaDescription,
-      user: user,
-      mainImage: { url: uploadedMainImage.secure_url, publicId: uploadedMainImage.public_id },
-      gallery: uploadedGallery,
-      accepted: false,
+  let response, data;
+  for (const model of VISION_MODEL_CANDIDATES) {
+    response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        reasoning_effort: "none",
+        reasoning_format: "hidden",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `The product name provided by the user is: ${JSON.stringify(
+                  String(productName)
+                )}. Look at the attached photo and base the category, tags, and description on what it actually shows.`,
+              },
+              { type: "image_url", image_url: { url: uploadedMainImage.url } },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.7,
+      }),
     });
 
-    res.status(201).json({
-      message: "AI Product generated and saved successfully for Medlout Auto",
-      product: newProduct,
-    });
-  } catch (error) {
-    console.error("Error creating AI product:", error);
-    res.status(500).json({
-      message: "Error creating AI product",
-      error: error.message || error,
-    });
+    data = await response.json().catch(() => ({}));
+
+    const modelMissing =
+      !response.ok && /does not exist|not found|decommissioned/i.test(data.error?.message || "");
+    if (!modelMissing) break; // success, or a different kind of error — stop retrying
+
+    console.warn(`Groq model "${model}" unavailable, trying next candidate...`);
   }
+
+  if (!response.ok) {
+    console.error("Groq API Error:", data);
+    await discardUploads(files);
+    removeImages([uploadedMainImage.publicId]);
+    return res.status(502).json({ message: "Le service IA a renvoyé une erreur. Réessayez." });
+  }
+
+  const responseText = data.choices?.[0]?.message?.content || "";
+  let aiData;
+  try {
+    aiData = JSON.parse(responseText);
+  } catch {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    try {
+      aiData = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    } catch {
+      aiData = null;
+    }
+  }
+  if (!aiData || !aiData.description) {
+    console.error("Could not extract JSON from AI response:", responseText);
+    await discardUploads(files);
+    removeImages([uploadedMainImage.publicId]);
+    return res.status(502).json({ message: "La réponse de l'IA était invalide. Réessayez." });
+  }
+
+  let parsedGalleryMeta = [];
+  try {
+    parsedGalleryMeta = galleryMeta ? JSON.parse(galleryMeta) : [];
+  } catch {
+    parsedGalleryMeta = [];
+  }
+
+  const gallery = (await uploadImages(galleryImageFiles)).map((img, i) => ({
+    ...img,
+    alt: parsedGalleryMeta[i]?.alt || productName,
+  }));
+
+  const product = await Product.create({
+    title: productName, // title is written by you, not AI-generated
+    slug: await uniqueSlug(aiData.slug || productName),
+    description: cleanDescription(aiData.description),
+    shortDescription: aiData.shortDescription,
+    price,
+    discountPrice,
+    category: aiData.category,
+    tags: parseTags(aiData.tags),
+    metaTitle: aiData.metaTitle,
+    metaDescription: aiData.metaDescription,
+    user: req.id,
+    mainImage: uploadedMainImage,
+    gallery,
+    accepted: false, // hidden until someone reviews it
+    aiGenerated: true,
+  });
+
+  res.status(201).json({
+    message: "AI Product generated and saved successfully for Medlout Auto",
+    product,
+  });
 };

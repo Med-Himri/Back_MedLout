@@ -1,24 +1,25 @@
 const express = require("express");
-const { verifyToken } = require("../middlewares/authMiddleware");
-const router = express.Router();
-
+const asyncHandler = require("../utils/asyncHandler");
+const { verifyToken, requireAdmin } = require("../middlewares/authMiddleware");
+const { orderLimiter } = require("../middlewares/rateLimit");
 const {
   createOrderCtrl,
   getOrdersCtrl,
-  updateOrderStatusCtrl,
+  getOrderCtrl,
+  updateOrderCtrl,
+  deleteOrderCtrl,
 } = require("../controllers/orderController");
 
-/* ================= PUBLIC ROUTES ================= */
-// Guest checkout — no login required, WhatsApp handoff
-router.post("/create", createOrderCtrl);
+const router = express.Router();
 
-/* ================= PROTECTED ROUTES (admin/staff) ================= */
-router.use(verifyToken);
-router.get("/getorders", getOrdersCtrl);
-router.post("/updatestatus", updateOrderStatusCtrl);
+/* ================= PUBLIC ================= */
+// Guest checkout — the order is saved, then the customer sends it on WhatsApp
+router.post("/create", orderLimiter, asyncHandler(createOrderCtrl));
+
+/* ================= STAFF / ADMIN ================= */
+router.get("/", verifyToken, asyncHandler(getOrdersCtrl));
+router.get("/:id", verifyToken, asyncHandler(getOrderCtrl));
+router.patch("/:id", verifyToken, asyncHandler(updateOrderCtrl));
+router.delete("/:id", verifyToken, requireAdmin, asyncHandler(deleteOrderCtrl));
 
 module.exports = router;
-
-// Mount this in your main server file alongside your existing routes:
-// const orderRoutes = require("./routes/order.routes");
-// app.use("/api/order", orderRoutes);

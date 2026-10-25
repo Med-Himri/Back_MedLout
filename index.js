@@ -1,49 +1,64 @@
 // Load env vars FIRST, before anything that might read process.env at import time
-// (e.g. your ./config/config.js probably reads MONGODB_URI when required)
 require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/config");
+const { notFound, errorHandler } = require("./middlewares/errorHandler");
 
 const app = express();
 
+// Vercel (and Docker behind a proxy) forwards the client IP in X-Forwarded-For;
+// rate limiting needs the real IP.
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+// Extra origins can be added without a code change: ALLOWED_ORIGINS=https://a.com,https://b.com
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://front-med-lout.vercel.app", // <-- fixed: removed trailing slash, this was the bug
+  "https://front-med-lout.vercel.app",
+  "https://medloutauto.com",
+  "https://www.medloutauto.com",
+  ...(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean),
 ];
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
+app.use(
+  cors({
+    // Unknown origins simply get no CORS headers (the browser blocks them)
+    // instead of a 500 error.
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
-app.use(cors(corsOptions));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// Make sure MongoDB is connected before any route runs (serverless cold starts).
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.use("/api/user", require("./routes/user.routes"));
+app.use("/api/product", require("./routes/product.routes"));
+app.use("/api/order", require("./routes/order.routes"));
+app.use("/api/message", require("./routes/message.routes"));
+app.use("/api/admin", require("./routes/admin.routes"));
+
+app.use(notFound);
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-
-connectDB().catch((err) => console.error("Failed to connect to MongoDB:", err));
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-const userRoutes = require("./routes/user.routes");
-const productsRouter = require("./routes/product.routes");
-const orderRoutes = require("./routes/order.routes");
-
-app.use("/api/user", userRoutes);
-app.use("/api/product", productsRouter);
-app.use("/api/order", orderRoutes);
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
