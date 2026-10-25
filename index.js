@@ -38,6 +38,9 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+// Answers even when the database is down (for uptime checks).
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+
 // Make sure MongoDB is connected before any route runs (serverless cold starts).
 app.use(async (req, res, next) => {
   try {
@@ -48,7 +51,6 @@ app.use(async (req, res, next) => {
   }
 });
 
-app.get("/api/health", (req, res) => res.json({ ok: true }));
 app.use("/api/user", require("./routes/user.routes"));
 app.use("/api/product", require("./routes/product.routes"));
 app.use("/api/order", require("./routes/order.routes"));
