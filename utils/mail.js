@@ -1,7 +1,9 @@
 const nodemailer = require("nodemailer");
 
-// SMTP credentials come from the environment only — never commit them.
-// Brevo: SMTP_HOST=smtp-relay.brevo.com SMTP_PORT=587 SMTP_USER=... SMTP_PASS=...
+// Optional. Without SMTP settings, "forgot password" emails are simply turned
+// off and an admin resets passwords from the Équipe page instead.
+// Any SMTP provider works (Gmail app password, Brevo, Mailgun…).
+// Credentials come from the environment only — never commit them.
 let transporter = null;
 const getTransporter = () => {
   if (transporter) return transporter;
@@ -54,4 +56,6 @@ const sendPasswordResetEmail = async ({ to, name, link, code }) => {
   return true;
 };
 
-module.exports = { sendPasswordResetEmail };
+const isMailConfigured = () => getTransporter() !== null;
+
+module.exports = { sendPasswordResetEmail, isMailConfigured };

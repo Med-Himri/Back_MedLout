@@ -19,6 +19,13 @@ There is no public sign-up. Either:
 
 Admins can then add staff from the admin panel (**Équipe** page).
 
+## Forgotten passwords
+
+- **Staff**: an admin sets a new password on the **Équipe** page.
+- **Owner / admin**: `node scripts/create-admin.js you@example.com "Your Name" "new-password"`
+  (with `MONGODB_URI` in `.env`) resets it.
+- Email reset links work only if the optional `SMTP_*` variables are set.
+
 ## Roles
 
 | | staff | admin |

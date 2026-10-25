@@ -11,6 +11,7 @@ const {
   listStaff,
   createStaff,
   updateStaffRole,
+  setStaffPassword,
   deleteStaff,
 } = require("../controllers/usercontroller");
 
@@ -30,6 +31,7 @@ router.post("/change-password", verifyToken, asyncHandler(changeMyPassword));
 router.get("/staff", verifyToken, requireAdmin, asyncHandler(listStaff));
 router.post("/staff", verifyToken, requireAdmin, asyncHandler(createStaff));
 router.patch("/staff/:id", verifyToken, requireAdmin, asyncHandler(updateStaffRole));
+router.post("/staff/:id/password", verifyToken, requireAdmin, asyncHandler(setStaffPassword));
 router.delete("/staff/:id", verifyToken, requireAdmin, asyncHandler(deleteStaff));
 
 module.exports = router;

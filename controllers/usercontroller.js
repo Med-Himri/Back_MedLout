@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const Otp = require("../models/otp");
 const { isAdminUser } = require("../middlewares/authMiddleware");
-const { sendPasswordResetEmail } = require("../utils/mail");
+const { sendPasswordResetEmail, isMailConfigured } = require("../utils/mail");
 const { generateToken } = require("../utils/token");
 
 const MIN_PASSWORD = 8;
@@ -74,6 +74,14 @@ exports.forgotPassword = async (req, res) => {
   const email = String(req.body.email || "").trim();
   if (!email) {
     return res.status(400).json({ message: "Email requis." });
+  }
+
+  if (!isMailConfigured()) {
+    return res.status(200).json({
+      emailDisabled: true,
+      message:
+        "La récupération par email n'est pas activée. Demandez à un administrateur de vous donner un nouveau mot de passe (page Équipe).",
+    });
   }
 
   const genericReply = {
@@ -184,6 +192,22 @@ exports.updateStaffRole = async (req, res) => {
   );
   if (!user) return res.status(404).json({ message: "Compte introuvable." });
   res.status(200).json(publicUser(user));
+};
+
+// Admin sets a new password for a staff member (no email needed)
+exports.setStaffPassword = async (req, res) => {
+  const password = String(req.body.password || "");
+  if (password.length < MIN_PASSWORD) {
+    return res
+      .status(400)
+      .json({ message: `Le mot de passe doit contenir au moins ${MIN_PASSWORD} caractères.` });
+  }
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: "Compte introuvable." });
+  user.password = await bcrypt.hash(password, 10);
+  await user.save();
+  await Otp.deleteMany({ userId: String(user._id) });
+  res.status(200).json({ message: `Nouveau mot de passe enregistré pour ${user.name}.` });
 };
 
 exports.deleteStaff = async (req, res) => {
