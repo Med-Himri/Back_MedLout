@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const mongoose = require("mongoose");
 const { Order, ORDER_STATUSES } = require("../models/Order");
 const { Product } = require("../models/Product");
+const { sendNewOrderEmail } = require("../utils/mail");
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const text = (value, max) => String(value ?? "").trim().slice(0, max);
@@ -102,6 +103,14 @@ exports.createOrderCtrl = async (req, res) => {
     }
   }
 
+  // Email the shop. Awaited (Vercel stops the function once the response is
+  // sent) but capped at 8 s, and a failure never cancels the order: it is
+  // already saved and visible in the admin.
+  await Promise.race([
+    sendNewOrderEmail(order).catch((error) => console.error("New order email failed:", error)),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]);
+
   res.status(201).json({
     message: "Commande créée avec succès",
     order: {
@@ -114,6 +123,7 @@ exports.createOrderCtrl = async (req, res) => {
       notes: order.notes,
       items: order.items,
       total: order.total,
+      createdAt: order.createdAt,
     },
   });
 };
