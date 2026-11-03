@@ -56,6 +56,83 @@ const sendPasswordResetEmail = async ({ to, name, link, code }) => {
   return true;
 };
 
+const money = (n) => `${Number(n || 0).toFixed(2)} DH`;
+
+/**
+ * Tells the shop about a new order. Goes to ORDER_NOTIFY_EMAIL (several
+ * addresses can be separated by commas), or to ADMIN_EMAIL if not set.
+ * Returns false when SMTP or the recipient is not configured.
+ */
+const sendNewOrderEmail = async (order) => {
+  const mailer = getTransporter();
+  const to = process.env.ORDER_NOTIFY_EMAIL || process.env.ADMIN_EMAIL;
+  if (!mailer || !to) {
+    console.warn("New order email not sent: SMTP_* or ORDER_NOTIFY_EMAIL/ADMIN_EMAIL not configured.");
+    return false;
+  }
+
+  const frontend = (process.env.FRONTEND_URL || "https://front-med-lout.vercel.app").replace(/\/$/, "");
+  const adminLink = `${frontend}/dashboard/commandes/${order._id}`;
+  const rows = order.items
+    .map(
+      (i) => `<tr>
+        <td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(i.title)}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">× ${i.quantity}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right">${money(i.price * i.quantity)}</td>
+      </tr>`
+    )
+    .join("");
+  const line = (label, value) =>
+    value ? `<p style="margin:4px 0;font-size:14px;color:#333"><strong>${label} :</strong> ${escapeHtml(value)}</p>` : "";
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;background:#f4f4f5;padding:24px">
+      <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:28px;border-top:4px solid #C41E3A">
+        <h1 style="font-size:20px;color:#1A1A1A;margin:0 0 4px">Nouvelle commande ${escapeHtml(order.orderNumber)}</h1>
+        <p style="margin:0 0 20px;color:#777;font-size:13px">${new Date(order.createdAt).toLocaleString("fr-FR", { timeZone: "Africa/Casablanca" })}</p>
+        ${line("Client", order.customerName)}
+        ${line("Téléphone", order.phone)}
+        ${line("Ville", order.city)}
+        ${line("Adresse", order.address)}
+        ${line("Notes", order.notes)}
+        <table style="width:100%;border-collapse:collapse;margin-top:20px;font-size:14px;color:#333">${rows}
+          <tr><td style="padding-top:12px;font-weight:bold">Total</td><td></td>
+          <td style="padding-top:12px;text-align:right;font-weight:bold;color:#C41E3A">${money(order.total)}</td></tr>
+        </table>
+        <p style="text-align:center;margin:28px 0 8px">
+          <a href="${escapeHtml(adminLink)}" style="background:#C41E3A;color:#fff;text-decoration:none;padding:14px 22px;border-radius:6px;font-weight:bold">Ouvrir la commande</a>
+        </p>
+      </div>
+    </div>`;
+
+  const text = [
+    `Nouvelle commande ${order.orderNumber}`,
+    ``,
+    `Client : ${order.customerName}`,
+    `Téléphone : ${order.phone}`,
+    order.city ? `Ville : ${order.city}` : null,
+    order.address ? `Adresse : ${order.address}` : null,
+    order.notes ? `Notes : ${order.notes}` : null,
+    ``,
+    ...order.items.map((i) => `- ${i.title} x${i.quantity} — ${money(i.price * i.quantity)}`),
+    ``,
+    `Total : ${money(order.total)}`,
+    ``,
+    adminLink,
+  ]
+    .filter((l) => l !== null)
+    .join("\n");
+
+  await mailer.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject: `🛒 Nouvelle commande ${order.orderNumber} — ${money(order.total)} — ${order.customerName}`,
+    text,
+    html,
+  });
+  return true;
+};
+
 const isMailConfigured = () => getTransporter() !== null;
 
-module.exports = { sendPasswordResetEmail, isMailConfigured };
+module.exports = { sendPasswordResetEmail, sendNewOrderEmail, isMailConfigured };
