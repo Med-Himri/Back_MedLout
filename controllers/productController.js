@@ -4,6 +4,16 @@ const { uploadImage, uploadImages, discardUploads, removeImages } = require("../
 
 const STOCK_VALUES = ["in_stock", "out_of_stock"];
 
+// The shop's categories (same list as the website's footer and filters).
+const SHOP_CATEGORIES = [
+  "Éclairage & LED",
+  "Électronique & Sécurité",
+  "Batteries & Démarrage",
+  "Nettoyage & Entretien",
+  "Confort & Intérieur",
+  "Chargeurs & Outillage",
+];
+
 // Fields the public shop grid / cards need — never the full HTML description.
 const CARD_FIELDS = "title slug price discountPrice stock category mainImage shortDescription createdAt";
 
@@ -278,7 +288,7 @@ exports.createAIProductCtrl = async (req, res) => {
       : "";
 
   const systemPrompt = `
-    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C store selling car accessories in Morocco.
+    You are an expert eCommerce copywriter and SEO specialist for "Medlout Auto", a B2C store selling car accessories (not spare parts) in Morocco.
     You will be shown a product photo. Base your category, tags, and description on what the image ACTUALLY shows.
 
     CATEGORY & VISUAL ANALYSIS REQUIREMENTS:
@@ -307,7 +317,7 @@ exports.createAIProductCtrl = async (req, res) => {
       "shortDescription": "Catchy 1-2 sentence short description (max 150 chars)",
       "metaTitle": "SEO optimized meta title (max 60 chars)",
       "metaDescription": "SEO optimized meta description (max 160 chars)",
-      "category": "The single most accurate category based on what the IMAGE actually shows",
+      "category": "EXACTLY one of: ${SHOP_CATEGORIES.join(" | ")} — the one that best matches what the IMAGE shows",
       "tags": ["tag1", "tag2", "tag3", "tag4"]
     }
   `;
@@ -402,7 +412,7 @@ exports.createAIProductCtrl = async (req, res) => {
     shortDescription: aiData.shortDescription,
     price,
     discountPrice,
-    category: aiData.category,
+    category: SHOP_CATEGORIES.includes(aiData.category) ? aiData.category : undefined,
     tags: parseTags(aiData.tags),
     metaTitle: aiData.metaTitle,
     metaDescription: aiData.metaDescription,
